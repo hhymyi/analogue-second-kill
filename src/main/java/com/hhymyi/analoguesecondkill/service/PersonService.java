@@ -1,21 +1,26 @@
 package com.hhymyi.analoguesecondkill.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hhymyi.analoguesecondkill.entity.Person;
 import com.hhymyi.analoguesecondkill.entity.PersonLog;
 import com.hhymyi.analoguesecondkill.repository.PersonLogRepository;
 import com.hhymyi.analoguesecondkill.repository.PersonRepository;
-import org.hibernate.StaleObjectStateException;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
 
 @Service
+@EnableAutoConfiguration
 public class PersonService {
-    private Logger logger=LoggerFactory.getLogger(PersonService.class);
+    private Logger logger = LoggerFactory.getLogger(PersonService.class);
 
 
     @Autowired
@@ -30,44 +35,113 @@ public class PersonService {
     @Autowired
     private PersonLogRepository personLogRepository;
 
+    @Autowired
+    private PublisherService publisherService;
+
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+
     public Person getPersonById(Long id) {
         return personRepository.findById(id).get();
     }
 
+
     public String secontKill(Long id) {
-        logger.info("kill begin:"+id);
+        logger.info("kill begin:" + id);
         PersonLog pl = new PersonLog();
         String keyNmae = "lock";
-        while(true){
-        String setnx = redisService.setnx(keyNmae, "lock");
-//            logger.info("killing"+id);
+        while (true) {
+            String setnx = redisService.setnx(keyNmae, "lock");
+            logger.info("killing" + id);
             if ("success".equals(setnx)) {
                 try {
-                    String stockStr=redisService.get("stock").toString();
-                    Integer stock=Integer.parseInt(stockStr);
+                    String stockStr = redisService.get("stock").toString();
+                    Integer stock = Integer.parseInt(stockStr);
                     if (stock > 0) {
-                        redisService.set("stock",stock - 1);
+                        redisService.set("stock", stock - 1);
                         pl.setNo(id.intValue());
                         pl.setKillResult(true);
                         pl.setKillInfo("success");
-                        personLogRepository.save(pl);
+                        ObjectMapper mapper = new ObjectMapper();
+                        String jsongStr = mapper.writeValueAsString(pl);
+                        kafkaTemplate.send("secondKill", "secondKill", jsongStr);
                         return "success";
                     } else {
                         pl.setKillResult(false);
                         pl.setKillInfo("sold out");
-                        personLogRepository.save(pl);
+                        ObjectMapper mapper = new ObjectMapper();
+                        String jsongStr = mapper.writeValueAsString(pl);
+                        kafkaTemplate.send("secondKill", "secondKill", jsongStr);
                         return "sold out";
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 } finally {
-                    logger.info("kill release"+id);
+                    logger.info("kill release" + id);
                     logger.info("------------------------------------------------------------------");
                     redisService.remove(keyNmae);
                 }
             }
-
         }
-
     }
+
+    @KafkaListener(topics = "secondKill")
+    public void listenKillTopic(ConsumerRecord<?, ?> cr) {
+//        logger.info("{} - {} : {}", cr.topic(), cr.key(), cr.value());
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            PersonLog personLog = mapper.readValue(cr.value().toString(), PersonLog.class);
+            personLogRepository.save(personLog);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * redis setnx锁 发布订阅
+     * @param id
+     * @return
+     */
+//    public String secontKill(Long id) {
+//        logger.info("kill begin:" + id);
+//        PersonLog pl = new PersonLog();
+//        String keyNmae = "lock";
+//        while (true) {
+//            String setnx = redisService.setnx(keyNmae, "lock");
+//            logger.info("killing" + id);
+//            if ("success".equals(setnx)) {
+//                try {
+//                    String stockStr = redisService.get("stock").toString();
+//                    Integer stock = Integer.parseInt(stockStr);
+//                    if (stock > 0) {
+//                        redisService.set("stock", stock - 1);
+//                        pl.setNo(id.intValue());
+//                        pl.setKillResult(true);
+//                        pl.setKillInfo("success");
+//                        ObjectMapper mapper = new ObjectMapper();
+//                        String jsongStr = mapper.writeValueAsString(pl);
+//                        redisService.lPush("kill result",jsongStr);
+////                        publisherService.sendMessage(jsongStr);
+//                        return "success";
+//                    } else {
+//                        pl.setKillResult(false);
+//                        pl.setKillInfo("sold out");
+//                        ObjectMapper mapper = new ObjectMapper();
+//                        String jsongStr = mapper.writeValueAsString(pl);
+//                        redisService.lPush("kill result",jsongStr);
+////                        publisherService.sendMessage(jsongStr);
+//                        return "sold out";
+//                    }
+//                } catch (Exception e) {
+//                    e.printStackTrace();
+//                } finally {
+//                    logger.info("kill release" + id);
+//                    logger.info("------------------------------------------------------------------");
+//                    redisService.remove(keyNmae);
+//                }
+//            }
+//        }
+//    }
 
 
     /**

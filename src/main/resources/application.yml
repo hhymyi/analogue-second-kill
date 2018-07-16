@@ -14,3 +14,9 @@ spring:
   redis:
     host: 127.0.0.1
     port: 6379
+  kafka:
+    producer:
+      bootstrap-servers: 127.0.0.1:9092
+    consumer:
+      group-id: aaa
+      auto-offset-reset: earliest
