@@ -140,9 +140,9 @@ public class RedisService {
      * @param k
      * @param v
      */
-    public void lPush(String k,Object v){
+    public Long lPush(String k,Object v){
         ListOperations<String, Object> list = redisTemplate.opsForList();
-        list.rightPush(k,v);
+        return list.rightPush(k,v);
     }
 
     /**
